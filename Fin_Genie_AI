@@ -1,0 +1,133 @@
+from flask import Flask, request, jsonify
+from twilio.rest import Client
+import requests
+import os
+
+app = Flask(_name_)
+
+# ------------------ Environment Variables (for security) ------------------
+TWILIO_SID = os.environ.get("ACbc8f8f47e12327748f43e8c84df91aea")
+TWILIO_AUTH = os.environ.get("5275439ea8fdb59ff96d8bfe2acb50c2")
+TWILIO_NUMBER = os.environ.get("+916369976701")  # Your Twilio number
+
+SENDGRID_API_KEY = os.environ.get("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")
+SENDGRID_URL = "https://api.sendgrid.com/v3/mail/send"
+
+twilio_client = Client(TWILIO_SID, TWILIO_AUTH)
+
+# ------------------ Customer Database (Static for now; can use DB later) ------------------
+customers = {
+    "POL123456789": {
+        "policy_number": "POL123456789",
+        "expiry_date": "15-Oct-2025",
+        "premium_amount": "₹7850",
+        "no_claim_bonus": "20%",
+        "customer_name": "Rajesh Kumar",
+        "insurer_name": "ICICI Lombard",
+        "phone": "+916369976701",
+        "email": "srijes444@example.com"
+    },
+    "POL987654321": {
+        "policy_number": "POL987654321",
+        "expiry_date": "25-Nov-2025",
+        "premium_amount": "₹9400",
+        "no_claim_bonus": "25%",
+        "customer_name": "Sneha Sharma",
+        "insurer_name": "HDFC ERGO",
+        "phone": "+919843969790",
+        "email": "nishmm010906@gmail.com"
+    }
+}
+
+# ------------------ 1. Pre-Call API ------------------
+@app.route("/precall", methods=["GET"])
+def get_precall_data():
+    policy_number = request.args.get("policy_number")
+    if not policy_number or policy_number not in customers:
+        return jsonify({"error": "Policy number not found"}), 404
+    return jsonify(customers[policy_number])
+
+# ------------------ 2. Send Email ------------------
+@app.route("/send_email", methods=["POST"])
+def send_email():
+    data = request.json
+    policy_number = data.get("policy_number")
+
+    if not policy_number or policy_number not in customers:
+        return jsonify({"error": "Policy number not found"}), 404
+
+    cust = customers[policy_number]
+
+    email_payload = {
+        "personalizations": [
+            {
+                "to": [{"email": cust["email"]}],
+                "subject": f"Insurance Renewal Reminder - {cust['policy_number']}"
+            }
+        ],
+        "from": {"email": "no-reply@yourdomain.com"},
+        "content": [
+            {
+                "type": "text/plain",
+                "value": f"Dear {cust['customer_name']},\n\n"
+                         f"Your policy {cust['policy_number']} with {cust['insurer_name']} "
+                         f"is expiring on {cust['expiry_date']}.\n"
+                         f"Premium Amount: {cust['premium_amount']}\n"
+                         f"No Claim Bonus: {cust['no_claim_bonus']}\n\n"
+                         f"Please renew your policy soon."
+            }
+        ]
+    }
+
+    headers = {
+        "Authorization": f"Bearer {SENDGRID_API_KEY}",
+        "Content-Type": "application/json"
+    }
+
+    response = requests.post(SENDGRID_URL, headers=headers, json=email_payload)
+    return jsonify({"status": response.status_code, "response": response.text})
+
+# ------------------ 3. Voice Response (Dynamic TwiML) ------------------
+@app.route("/voice_response/<policy_number>", methods=["GET", "POST"])
+def voice_response(policy_number):
+    if policy_number not in customers:
+        return "<Response><Say>Policy not found.</Say></Response>", 404
+
+    cust = customers[policy_number]
+    message = (
+        f"Hello {cust['customer_name']}, your insurance policy {cust['policy_number']} "
+        f"with {cust['insurer_name']} is expiring on {cust['expiry_date']}. "
+        "Please renew your policy soon. Thank you."
+    )
+    twiml = f"""
+    <Response>
+        <Say voice="alice">{message}</Say>
+    </Response>
+    """
+    return twiml, 200, {'Content-Type': 'application/xml'}
+
+# ------------------ 4. Call Customer ------------------
+@app.route("/call_customer", methods=["POST"])
+def call_customer():
+    data = request.json
+    policy_number = data.get("policy_number")
+
+    if not policy_number or policy_number not in customers:
+        return jsonify({"error": "Policy number not found"}), 404
+
+    cust = customers[policy_number]
+    try:
+        call = twilio_client.calls.create(
+            to=cust["phone"],
+            from_=TWILIO_NUMBER,
+            url=f"http://<YOUR_SERVER_DOMAIN>/voice_response/{policy_number}"  # Replace with your server domain
+        )
+        return jsonify({"message": "Call initiated", "call_sid": call.sid})
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+# ------------------ Run Server ------------------
+if _name_ == "_main_":
+    app.run(host="0.0.0.0", port=5000, debug=True)
+#from twilio.rest import Client
+#print(Client)
